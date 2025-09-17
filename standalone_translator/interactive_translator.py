@@ -4,20 +4,21 @@
 import sys
 import re
 import os
+import argparse
 
 from string_tool import EncodeBracketContent
 
-def dummy_translate(original_text):
+def dummy_translate(text_list):
     """
-    A dummy translation function that appends '(translated)' to the original text.
+    A dummy batch translation function that appends '(translated)' to each string in a list.
     """
-    return f"{original_text} (translated)"
+    return [f"{text} (translated)" for text in text_list]
 
-def interactive_translate(file_path):
+def interactive_translate(file_path, batch_size):
     """
     Interactively translates an .rpy file using existing project logic.
     """
-    print(f"Starting interactive translation for: {file_path}")
+    print(f"Starting translation for: {file_path} with batch size: {batch_size}")
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
@@ -28,55 +29,34 @@ def interactive_translate(file_path):
         print(f"An error occurred while reading the file: {e}")
         sys.exit(1)
 
-    new_lines = list(lines)
+    # Step 1: Collect all translatable texts
+    translatable_blocks = []
     i = 0
-    while i < len(new_lines):
-        line = new_lines[i]
+    while i < len(lines):
+        line = lines[i]
 
         # Pattern 1: Dialogue
         if re.match(r'^\s*translate\s+\w+\s+\w+:', line):
-            # Found the start of a block, now search for the content lines
-            comment_line_index = -1
-            original_line_index = -1
+            comment_line_index, original_line_index = -1, -1
             search_index = i + 1
-
-            # Find the commented line, skipping blank lines
-            while search_index < len(new_lines) and not new_lines[search_index].strip():
-                search_index += 1
-            if search_index < len(new_lines) and new_lines[search_index].strip().startswith('#'):
-                comment_line_index = search_index
-
-            # Find the original text line, skipping blank lines
+            while search_index < len(lines) and not lines[search_index].strip(): search_index += 1
+            if search_index < len(lines) and lines[search_index].strip().startswith('#'): comment_line_index = search_index
             if comment_line_index != -1:
                 search_index = comment_line_index + 1
-                while search_index < len(new_lines) and not new_lines[search_index].strip():
-                    search_index += 1
-                if search_index < len(new_lines) and not new_lines[search_index].strip().startswith('#'):
-                    original_line_index = search_index
+                while search_index < len(lines) and not lines[search_index].strip(): search_index += 1
+                if search_index < len(lines) and not lines[search_index].strip().startswith('#'): original_line_index = search_index
 
             if original_line_index != -1:
-                # We found the block
-                original_line = new_lines[original_line_index]
-
-                # Skip if already done
-                if '#done' in original_line:
-                    i = original_line_index
-                    continue
-
-                d = EncodeBracketContent(original_line, '"', '"')
-                if 'oriList' in d and len(d['oriList']) > 0:
-                    original_text = d['oriList'][0][1:-1].replace('\\"', '"')
-                    print(f"\nTranslating (Line {original_line_index + 1}): {original_text}")
-                    translated_text = dummy_translate(original_text)
-
-                    indentation = re.match(r'^\s*', original_line).group(0)
-                    escaped_translation = translated_text.replace('"', '\\"')
-                    new_lines[original_line_index] = f'{indentation}"{escaped_translation}" #done\n'
-
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        f.writelines(new_lines)
-                    print("Updated.")
-
+                original_line = lines[original_line_index]
+                if '#done' not in original_line:
+                    d = EncodeBracketContent(original_line, '"', '"')
+                    if 'oriList' in d and len(d['oriList']) > 0:
+                        original_text = d['oriList'][0][1:-1].replace('\\"', '"')
+                        translatable_blocks.append({
+                            'type': 'dialogue',
+                            'line_index': original_line_index,
+                            'text': original_text
+                        })
                 i = original_line_index
             else:
                 i +=1
@@ -85,36 +65,60 @@ def interactive_translate(file_path):
         # Pattern 2: old/new
         if line.strip().startswith('old '):
             new_line_index = i + 1
-            if new_line_index < len(new_lines) and new_lines[new_line_index].strip().startswith('new'):
-
-                # Skip if already done
-                if '#done' in new_lines[new_line_index]:
-                    i += 1
-                    continue
-
-                d = EncodeBracketContent(line, '"', '"')
-                if 'oriList' in d and len(d['oriList']) > 0:
-                    original_text = d['oriList'][0][1:-1].replace('\\"', '"')
-                    print(f"\nTranslating (Line {i + 1}): {original_text}")
-                    translated_text = dummy_translate(original_text)
-
-                    indentation = re.match(r'^\s*', new_lines[new_line_index]).group(0)
-                    escaped_translation = translated_text.replace('"', '\\"')
-                    new_lines[new_line_index] = f'{indentation}new "{escaped_translation}" #done\n'
-
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        f.writelines(new_lines)
-                    print("Updated.")
+            if new_line_index < len(lines) and lines[new_line_index].strip().startswith('new'):
+                if '#done' not in lines[new_line_index]:
+                    d = EncodeBracketContent(line, '"', '"')
+                    if 'oriList' in d and len(d['oriList']) > 0:
+                        original_text = d['oriList'][0][1:-1].replace('\\"', '"')
+                        translatable_blocks.append({
+                            'type': 'new_string',
+                            'line_index': new_line_index,
+                            'text': original_text
+                        })
                 i += 1
                 continue
         i += 1
 
-    print("\nAll translations complete.")
+    print(f"Found {len(translatable_blocks)} untranslated blocks.")
+
+    # Step 2: Process the blocks in batches
+    new_lines = list(lines) # Make a copy to modify
+    for i in range(0, len(translatable_blocks), batch_size):
+        batch = translatable_blocks[i:i + batch_size]
+
+        texts_to_translate = [block['text'] for block in batch]
+
+        print(f"\n--- Translating Batch {i//batch_size + 1} ---")
+        translated_texts = dummy_translate(texts_to_translate)
+
+        # Step 3: Update the content in memory
+        for block, translated_text in zip(batch, translated_texts):
+            line_index = block['line_index']
+            original_line = lines[line_index] # Use original lines for indentation
+            indentation = re.match(r'^\s*', original_line).group(0)
+            escaped_translation = translated_text.replace('"', '\\"')
+
+            if block['type'] == 'dialogue':
+                new_lines[line_index] = f'{indentation}"{escaped_translation}" #done\n'
+            elif block['type'] == 'new_string':
+                new_lines[line_index] = f'{indentation}new "{escaped_translation}" #done\n'
+
+        # Step 4: Write the updated content back to the file after each batch
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+            print(f"--- Batch {i//batch_size + 1} saved successfully. ---")
+        except Exception as e:
+            print(f"\nAn error occurred while writing to the file: {e}")
+            sys.exit(1) # Exit if we can't save progress
+
+    print(f"\nAll batches processed and saved to {file_path}.")
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python src/interactive_translator.py <path_to_rpy_file>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description='Translate .rpy files automatically.')
+    parser.add_argument('file_path', type=str, help='The path to the .rpy file to translate.')
+    parser.add_argument('--batch-size', type=int, default=10, help='The number of lines to translate in each batch.')
 
-    rpy_file = sys.argv[1]
-    interactive_translate(rpy_file)
+    args = parser.parse_args()
+
+    interactive_translate(args.file_path, args.batch_size)
