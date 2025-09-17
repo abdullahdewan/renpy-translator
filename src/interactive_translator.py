@@ -3,10 +3,15 @@
 
 import sys
 import re
+import os
+
+# Need to add src to path to import from string_tool
+sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
+from string_tool import EncodeBracketContent
 
 def interactive_translate(file_path):
     """
-    Interactively translates an .rpy file.
+    Interactively translates an .rpy file using existing project logic.
     """
     print(f"Starting interactive translation for: {file_path}")
     try:
@@ -16,7 +21,7 @@ def interactive_translate(file_path):
         print(f"Error: File not found at {file_path}")
         sys.exit(1)
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"An error occurred while reading the file: {e}")
         sys.exit(1)
 
     new_lines = list(lines)
@@ -29,51 +34,49 @@ def interactive_translate(file_path):
             if i + 2 < len(new_lines):
                 comment_line = new_lines[i+1]
                 original_line = new_lines[i+2]
+                if comment_line.strip().startswith('#') and not original_line.strip().startswith('#'):
+                    d = EncodeBracketContent(original_line, '"', '"')
+                    if 'oriList' in d and len(d['oriList']) > 0:
+                        original_text = d['oriList'][0][1:-1].replace('\\"', '"')
+                        print(f"\n--- Original (Line {i+3}) ---\n{original_text}")
+                        translated_text = input("Enter translation: ")
 
-                original_text_match = re.search(r'"(.*)"', original_line)
-                if comment_line.strip().startswith('#') and not original_line.strip().startswith('#') and original_text_match:
-                    original_text = original_text_match.group(1).replace('\\"', '"')
-                    print(f"\n--- Original (Line {i+3}) ---\n{original_text}")
+                        indentation = re.match(r'^\s*', original_line).group(0)
+                        escaped_translation = translated_text.replace('"', '\\"')
+                        new_lines[i+2] = f'{indentation}"{escaped_translation}"\n'
 
-                    translated_text = input("Enter translation: ")
-
-                    indentation = re.match(r'^\s*', original_line).group(0)
-                    # Escape quotes in the translated text for Ren'Py
-                    escaped_translation = translated_text.replace('"', '\\"')
-                    new_lines[i+2] = f'{indentation}"{escaped_translation}"\n'
-                    print("Updated.")
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.writelines(new_lines)
+                        print("Updated.")
                     i += 2
                     continue
 
         # Pattern 2: old/new
-        old_match = re.match(r'^\s*old\s+"(.*)"', line)
-        if old_match:
+        if line.strip().startswith('old '):
             new_line_index = i + 1
             if new_line_index < len(new_lines) and new_lines[new_line_index].strip().startswith('new'):
-                original_text = old_match.group(1).replace('\\"', '"')
-                print(f"\n--- Original (Line {i+1}) ---\n{original_text}")
+                d = EncodeBracketContent(line, '"', '"')
+                if 'oriList' in d and len(d['oriList']) > 0:
+                    original_text = d['oriList'][0][1:-1].replace('\\"', '"')
+                    print(f"\n--- Original (Line {i+1}) ---\n{original_text}")
+                    translated_text = input("Enter translation: ")
 
-                translated_text = input("Enter translation: ")
+                    indentation = re.match(r'^\s*', new_lines[new_line_index]).group(0)
+                    escaped_translation = translated_text.replace('"', '\\"')
+                    new_lines[new_line_index] = f'{indentation}new "{escaped_translation}"\n'
 
-                indentation = re.match(r'^\s*', new_lines[new_line_index]).group(0)
-                # Escape quotes in the translated text for Ren'Py
-                escaped_translation = translated_text.replace('"', '\\"')
-                new_lines[new_line_index] = f'{indentation}new "{escaped_translation}"\n'
-                print("Updated.")
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.writelines(new_lines)
+                    print("Updated.")
                 i += 1
                 continue
         i += 1
 
-    try:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.writelines(new_lines)
-        print(f"\nTranslation finished. File '{file_path}' has been updated.")
-    except Exception as e:
-        print(f"An error occurred while writing to the file: {e}")
+    print("\nAll translations complete.")
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print("Usage: python interactive_translator.py <path_to_rpy_file>")
+        print("Usage: python src/interactive_translator.py <path_to_rpy_file>")
         sys.exit(1)
 
     rpy_file = sys.argv[1]
