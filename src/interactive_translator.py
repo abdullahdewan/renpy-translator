@@ -31,25 +31,46 @@ def interactive_translate(file_path):
 
         # Pattern 1: Dialogue
         if re.match(r'^\s*translate\s+\w+\s+\w+:', line):
-            if i + 2 < len(new_lines):
-                comment_line = new_lines[i+1]
-                original_line = new_lines[i+2]
-                if comment_line.strip().startswith('#') and not original_line.strip().startswith('#'):
-                    d = EncodeBracketContent(original_line, '"', '"')
-                    if 'oriList' in d and len(d['oriList']) > 0:
-                        original_text = d['oriList'][0][1:-1].replace('\\"', '"')
-                        print(f"\n--- Original (Line {i+3}) ---\n{original_text}")
-                        translated_text = input("Enter translation: ")
+            # Found the start of a block, now search for the content lines
+            comment_line_index = -1
+            original_line_index = -1
+            search_index = i + 1
 
-                        indentation = re.match(r'^\s*', original_line).group(0)
-                        escaped_translation = translated_text.replace('"', '\\"')
-                        new_lines[i+2] = f'{indentation}"{escaped_translation}"\n'
+            # Find the commented line, skipping blank lines
+            while search_index < len(new_lines) and not new_lines[search_index].strip():
+                search_index += 1
+            if search_index < len(new_lines) and new_lines[search_index].strip().startswith('#'):
+                comment_line_index = search_index
 
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            f.writelines(new_lines)
-                        print("Updated.")
-                    i += 2
-                    continue
+            # Find the original text line, skipping blank lines
+            if comment_line_index != -1:
+                search_index = comment_line_index + 1
+                while search_index < len(new_lines) and not new_lines[search_index].strip():
+                    search_index += 1
+                if search_index < len(new_lines) and not new_lines[search_index].strip().startswith('#'):
+                    original_line_index = search_index
+
+            if original_line_index != -1:
+                # We found the block
+                original_line = new_lines[original_line_index]
+                d = EncodeBracketContent(original_line, '"', '"')
+                if 'oriList' in d and len(d['oriList']) > 0:
+                    original_text = d['oriList'][0][1:-1].replace('\\"', '"')
+                    print(f"\n--- Original (Line {original_line_index + 1}) ---\n{original_text}")
+                    translated_text = input("Enter translation: ")
+
+                    indentation = re.match(r'^\s*', original_line).group(0)
+                    escaped_translation = translated_text.replace('"', '\\"')
+                    new_lines[original_line_index] = f'{indentation}"{escaped_translation}"\n'
+
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.writelines(new_lines)
+                    print("Updated.")
+
+                i = original_line_index
+            else:
+                i +=1
+            continue
 
         # Pattern 2: old/new
         if line.strip().startswith('old '):
