@@ -10,9 +10,18 @@ from string_tool import EncodeBracketContent
 
 def dummy_translate(text_list):
     """
-    A dummy batch translation function that appends '(translated)' to each string in a list.
+    A dummy batch translation function that intelligently appends '(translated)' to each string in a list,
+    preserving in-string formatting like newlines and tags.
     """
-    return [f"{text} (translated)" for text in text_list]
+    translated_list = []
+    for text in text_list:
+        # Split the string by the first newline to handle multi-line content with tags
+        parts = text.split('\n', 1)
+        # Add the translation to the first part (the main text)
+        parts[0] = parts[0].rstrip() + ' (translated)'
+        # Join the parts back together
+        translated_list.append('\n'.join(parts))
+    return translated_list
 
 def interactive_translate(file_path, batch_size):
     """
