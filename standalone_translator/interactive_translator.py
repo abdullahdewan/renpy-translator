@@ -53,7 +53,10 @@ def interactive_translate(file_path, batch_size):
             if comment_line_index != -1:
                 search_index = comment_line_index + 1
                 while search_index < len(lines) and not lines[search_index].strip(): search_index += 1
-                if search_index < len(lines) and not lines[search_index].strip().startswith('#'): original_line_index = search_index
+                if search_index < len(lines) and not lines[search_index].strip().startswith('#'):
+                    # Also ensure it's not an 'old' block being mistaken for dialogue
+                    if not lines[search_index].strip().startswith('old '):
+                        original_line_index = search_index
 
             if original_line_index != -1:
                 original_line = lines[original_line_index]
