@@ -12,13 +12,13 @@ import google.generativeai as genai
 
 from string_tool import EncodeBracketContent
 
-def gemini_translate(text_list):
+def gemini_translate(text_list, model_name, history):
     # Configure the Gemini API client inside the function
     # to ensure it runs after the .env file is loaded.
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
     if not text_list:
-        return []
+        return [], history
 
     max_retries = 3
 
@@ -29,7 +29,8 @@ def gemini_translate(text_list):
 2.  **Array Length:** The returned JSON array MUST have the exact same number of elements as the input array.
 3.  **Preserve Tags:** Do NOT translate or alter any text inside special brackets, such as `[...`]` or `{...}`. These are game engine tags and must be preserved exactly.
 4.  **Preserve Newlines:** Maintain all newline characters (`\\n`).
-5.  **Direct Translation:** Do not add any extra explanations, apologies, or conversational text in your response. Your entire response must be a single, valid JSON array.
+5.  **Maintain Tone:** It is crucial to maintain the original emotion, expression, and tone of the dialogue.
+6.  **Direct Translation:** Do not add any extra explanations, apologies, or conversational text in your response. Your entire response must be a single, valid JSON array.
 
 Example Input:
 ["Hello, [player_name].", "How are you?\\nI am fine."]
@@ -39,26 +40,25 @@ Example Output:
 """
 
     model = genai.GenerativeModel(
-        model_name='gemini-pro',
+        model_name=model_name,
         system_instruction=system_prompt
     )
 
-    # Serialize the list of texts into a JSON string
+    chat = model.start_chat(history=history)
+
     json_input = json.dumps(text_list, ensure_ascii=False)
 
     for attempt in range(max_retries):
         try:
             print(f"    - Sending batch of {len(text_list)} texts to Gemini (Attempt {attempt + 1}/{max_retries})...")
-            response = model.generate_content(json_input)
+            response = chat.send_message(json_input)
 
-            # Clean the response to ensure it's valid JSON
             cleaned_response_text = response.text.strip().lstrip("```json").rstrip("```")
-
             translated_texts = json.loads(cleaned_response_text)
 
             if isinstance(translated_texts, list) and len(translated_texts) == len(text_list):
                 print("    - Batch successfully translated and parsed.")
-                return translated_texts
+                return translated_texts, chat.history
             else:
                 print(f"    - Error: Parsed JSON is not a list or length mismatch. Expected {len(text_list)}, got {len(translated_texts)}.")
                 if attempt < max_retries - 1:
@@ -78,15 +78,14 @@ Example Output:
                 print("    - Retrying in 5 seconds...")
                 time.sleep(5)
 
-    # If all retries fail
     print("    - All retries failed for this batch.")
     raise RuntimeError("Failed to translate batch after multiple retries due to persistent errors.")
 
-def interactive_translate(file_path, batch_size):
+def interactive_translate(file_path, batch_size, model_name):
     """
     Interactively translates an .rpy file using existing project logic.
     """
-    print(f"Starting translation for: {file_path} with batch size: {batch_size}")
+    print(f"Starting translation for: {file_path} with model: {model_name} and batch size: {batch_size}")
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
@@ -162,6 +161,7 @@ def interactive_translate(file_path, batch_size):
 
     # Step 2: Process the blocks in batches
     new_lines = list(lines) # Make a copy to modify
+    history = []
     for i in range(0, len(translatable_blocks), batch_size):
         batch = translatable_blocks[i:i + batch_size]
 
@@ -169,7 +169,7 @@ def interactive_translate(file_path, batch_size):
 
         print(f"\n--- Translating Batch {i//batch_size + 1} of {len(translatable_blocks)//batch_size + 1} ---")
         try:
-            translated_texts = gemini_translate(texts_to_translate)
+            translated_texts, history = gemini_translate(texts_to_translate, model_name, history)
         except RuntimeError as e:
             print(f"\nFATAL ERROR: {e}")
             print("The script will now exit to prevent further errors or data corruption.")
@@ -208,10 +208,13 @@ if __name__ == '__main__':
         print("Error: GEMINI_API_KEY not found in .env file.")
         sys.exit(1)
 
+    # Get model name from environment, with a default
+    model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-pro")
+
     parser = argparse.ArgumentParser(description='Translate .rpy files automatically.')
     parser.add_argument('file_path', type=str, help='The path to the .rpy file to translate.')
     parser.add_argument('--batch-size', type=int, default=10, help='The number of lines to translate in each batch.')
 
     args = parser.parse_args()
 
-    interactive_translate(args.file_path, args.batch_size)
+    interactive_translate(args.file_path, args.batch_size, model_name)
