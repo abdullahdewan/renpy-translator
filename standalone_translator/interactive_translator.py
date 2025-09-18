@@ -20,6 +20,7 @@ def gemini_translate(text_list):
         return []
 
     delimiter = "_|||_"
+    max_retries = 3
 
     system_prompt = f"""You are an expert translator for Ren'Py video games. Translate the following list of texts from English to Bengali.
 The texts are separated by a unique delimiter: `{delimiter}`.
@@ -29,12 +30,6 @@ Your response MUST contain the same number of texts, separated by the same delim
 1.  **Preserve Tags:** Do NOT translate or alter any text inside special brackets, such as `[...`]` or `{{...}}`. These are game engine tags.
 2.  **Preserve Newlines:** Maintain all newline characters (`\\n`).
 3.  **Direct Translation Only:** Provide only the translated texts, separated by the delimiter. Do not add any extra explanations.
-
-Example Input:
-Hello, [player_name].{delimiter}How are you?\nI am fine.
-
-Example Output:
-নমস্কার, [player_name]।{delimiter}আপনি কেমন আছেন?\nআমি ভালো আছি।
 """
 
     model = genai.GenerativeModel(
@@ -42,29 +37,37 @@ Example Output:
         system_instruction=system_prompt
     )
 
-    # Join the batch into a single string
     combined_text = delimiter.join(text_list)
 
-    try:
-        print(f"    - Sending batch of {len(text_list)} texts to Gemini...")
-        response = model.generate_content(combined_text)
+    for attempt in range(max_retries):
+        try:
+            print(f"    - Sending batch of {len(text_list)} texts to Gemini (Attempt {attempt + 1}/{max_retries})...")
+            response = model.generate_content(combined_text)
+            translated_texts = response.text.split(delimiter)
 
-        # Split the response by the delimiter to get individual translations
-        translated_texts = response.text.split(delimiter)
+            if len(translated_texts) == len(text_list):
+                print("    - Batch successfully translated.")
+                return translated_texts
+            else:
+                # This is a content error, not a connection error. Retrying might not help but we'll try.
+                print(f"    - Error: Mismatch in translated texts count. Expected {len(text_list)}, got {len(translated_texts)}.")
+                if attempt < max_retries - 1:
+                    print("    - Retrying...")
+                    time.sleep(5)
+                continue
 
-        # Validate the response
-        if len(translated_texts) == len(text_list):
-            print("    - Batch successfully translated.")
-            return translated_texts
-        else:
-            print(f"    - Error: Mismatch in translated texts count. Expected {len(text_list)}, got {len(translated_texts)}.")
-            print("    - Skipping this batch to avoid corruption.")
-            return text_list # Return original texts on error
+        except Exception as e:
+            print(f"    - An error occurred during Gemini API call: {e}")
+            if attempt < max_retries - 1:
+                print("    - Retrying in 5 seconds...")
+                time.sleep(5)
+            else:
+                print("    - All retries failed for this batch.")
+                raise RuntimeError("Failed to translate batch after multiple retries.")
 
-    except Exception as e:
-        print(f"    - An error occurred during Gemini API call: {e}")
-        print("    - Skipping this batch and continuing.")
-        return text_list # Return original texts on error
+    # This part should only be reached if content mismatch happens on the last retry
+    print("    - Skipping batch due to persistent content mismatch.")
+    raise RuntimeError("Failed to translate batch due to persistent content mismatch.")
 
 def interactive_translate(file_path, batch_size):
     """
@@ -144,7 +147,12 @@ def interactive_translate(file_path, batch_size):
         texts_to_translate = [block['text'] for block in batch]
 
         print(f"\n--- Translating Batch {i//batch_size + 1} of {len(translatable_blocks)//batch_size + 1} ---")
-        translated_texts = gemini_translate(texts_to_translate)
+        try:
+            translated_texts = gemini_translate(texts_to_translate)
+        except RuntimeError as e:
+            print(f"\nFATAL ERROR: {e}")
+            print("The script will now exit to prevent further errors or data corruption.")
+            sys.exit(1)
 
         # Step 3: Update the content in memory
         for block, translated_text in zip(batch, translated_texts):
