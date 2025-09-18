@@ -6,6 +6,7 @@ import re
 import os
 import argparse
 import time
+import json
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -19,17 +20,22 @@ def gemini_translate(text_list):
     if not text_list:
         return []
 
-    delimiter = "_|||_"
     max_retries = 3
 
-    system_prompt = f"""You are an expert translator for Ren'Py video games. Translate the following list of texts from English to Bengali.
-The texts are separated by a unique delimiter: `{delimiter}`.
-Your response MUST contain the same number of texts, separated by the same delimiter.
+    system_prompt = """You are an expert translation API. You will be provided with a JSON array of strings in English. Your task is to translate each string into Bengali.
 
-**CRITICAL INSTRUCTIONS:**
-1.  **Preserve Tags:** Do NOT translate or alter any text inside special brackets, such as `[...`]` or `{{...}}`. These are game engine tags.
-2.  **Preserve Newlines:** Maintain all newline characters (`\\n`).
-3.  **Direct Translation Only:** Provide only the translated texts, separated by the delimiter. Do not add any extra explanations.
+**RULES:**
+1.  **Input/Output Format:** You will receive a JSON array of strings and you MUST respond with only a valid JSON array of strings.
+2.  **Array Length:** The returned JSON array MUST have the exact same number of elements as the input array.
+3.  **Preserve Tags:** Do NOT translate or alter any text inside special brackets, such as `[...`]` or `{...}`. These are game engine tags and must be preserved exactly.
+4.  **Preserve Newlines:** Maintain all newline characters (`\\n`).
+5.  **Direct Translation:** Do not add any extra explanations, apologies, or conversational text in your response. Your entire response must be a single, valid JSON array.
+
+Example Input:
+["Hello, [player_name].", "How are you?\\nI am fine."]
+
+Example Output:
+["নমস্কার, [player_name]।" , "আপনি কেমন আছেন?\\nআমি ভালো আছি।"]
 """
 
     model = genai.GenerativeModel(
@@ -37,37 +43,44 @@ Your response MUST contain the same number of texts, separated by the same delim
         system_instruction=system_prompt
     )
 
-    combined_text = delimiter.join(text_list)
+    # Serialize the list of texts into a JSON string
+    json_input = json.dumps(text_list, ensure_ascii=False)
 
     for attempt in range(max_retries):
         try:
             print(f"    - Sending batch of {len(text_list)} texts to Gemini (Attempt {attempt + 1}/{max_retries})...")
-            response = model.generate_content(combined_text)
-            translated_texts = response.text.split(delimiter)
+            response = model.generate_content(json_input)
 
-            if len(translated_texts) == len(text_list):
-                print("    - Batch successfully translated.")
+            # Clean the response to ensure it's valid JSON
+            cleaned_response_text = response.text.strip().lstrip("```json").rstrip("```")
+
+            translated_texts = json.loads(cleaned_response_text)
+
+            if isinstance(translated_texts, list) and len(translated_texts) == len(text_list):
+                print("    - Batch successfully translated and parsed.")
                 return translated_texts
             else:
-                # This is a content error, not a connection error. Retrying might not help but we'll try.
-                print(f"    - Error: Mismatch in translated texts count. Expected {len(text_list)}, got {len(translated_texts)}.")
+                print(f"    - Error: Parsed JSON is not a list or length mismatch. Expected {len(text_list)}, got {len(translated_texts)}.")
                 if attempt < max_retries - 1:
                     print("    - Retrying...")
                     time.sleep(5)
                 continue
 
+        except json.JSONDecodeError as e:
+            print(f"    - Error decoding JSON response from Gemini: {e}")
+            print(f"    - Received text: {response.text}")
+            if attempt < max_retries - 1:
+                print("    - Retrying in 5 seconds...")
+                time.sleep(5)
         except Exception as e:
             print(f"    - An error occurred during Gemini API call: {e}")
             if attempt < max_retries - 1:
                 print("    - Retrying in 5 seconds...")
                 time.sleep(5)
-            else:
-                print("    - All retries failed for this batch.")
-                raise RuntimeError("Failed to translate batch after multiple retries.")
 
-    # This part should only be reached if content mismatch happens on the last retry
-    print("    - Skipping batch due to persistent content mismatch.")
-    raise RuntimeError("Failed to translate batch due to persistent content mismatch.")
+    # If all retries fail
+    print("    - All retries failed for this batch.")
+    raise RuntimeError("Failed to translate batch after multiple retries due to persistent errors.")
 
 def interactive_translate(file_path, batch_size):
     """
