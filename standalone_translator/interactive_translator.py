@@ -120,14 +120,22 @@ def interactive_translate(file_path, batch_size):
             if original_line_index != -1:
                 original_line = lines[original_line_index]
                 if '#done' not in original_line:
-                    d = EncodeBracketContent(original_line, '"', '"')
-                    if 'oriList' in d and len(d['oriList']) > 0:
-                        original_text = d['oriList'][0][1:-1].replace('\\"', '"')
-                        translatable_blocks.append({
-                            'type': 'dialogue',
-                            'line_index': original_line_index,
-                            'text': original_text
-                        })
+                    # Regex to capture (indentation), (optional_character_tag), and ("the_dialogue")
+                    match = re.match(r'^(\s*)(.*?)(".*")$', original_line)
+                    if match:
+                        prefix = match.group(2)
+                        quoted_string = match.group(3)
+
+                        # Use EncodeBracketContent on the quoted part only
+                        d = EncodeBracketContent(quoted_string, '"', '"')
+                        if 'oriList' in d and len(d['oriList']) > 0:
+                            original_text = d['oriList'][0][1:-1].replace('\\"', '"')
+                            translatable_blocks.append({
+                                'type': 'dialogue',
+                                'line_index': original_line_index,
+                                'text': original_text,
+                                'prefix': prefix # Store the prefix
+                            })
                 i = original_line_index
             else:
                 i +=1
@@ -175,7 +183,8 @@ def interactive_translate(file_path, batch_size):
             escaped_translation = translated_text.replace('"', '\\"')
 
             if block['type'] == 'dialogue':
-                new_lines[line_index] = f'{indentation}"{escaped_translation}" #done\n'
+                prefix = block.get('prefix', '') # Get prefix, default to empty string
+                new_lines[line_index] = f'{indentation}{prefix}"{escaped_translation}" #done\n'
             elif block['type'] == 'new_string':
                 new_lines[line_index] = f'{indentation}new "{escaped_translation}" #done\n'
 
