@@ -5,22 +5,51 @@ import sys
 import re
 import os
 import argparse
+import time
+from dotenv import load_dotenv
+import google.generativeai as genai
 
 from string_tool import EncodeBracketContent
 
-def dummy_translate(text_list):
+# Configure the Gemini API client
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+def gemini_translate(text_list):
     """
-    A dummy batch translation function that intelligently appends '(translated)' to each string in a list,
-    preserving in-string formatting like newlines and tags.
+    Translates a batch of texts using the Gemini API.
     """
+    system_prompt = """You are an expert translator specializing in translating dialogue and user interface text for video games, specifically for the Ren'Py engine.
+Your task is to translate the given text from English to Bengali accurately while preserving the original tone and style.
+
+**CRITICAL INSTRUCTIONS:**
+1.  **Preserve Tags:** Do NOT translate or alter any text inside special brackets, such as `[...`]` or `{...}`. These are game engine tags and must remain exactly as they are. For example, if you see `[player_name]`, you must return `[player_name]`.
+2.  **Preserve Newlines:** Maintain all newline characters (`\\n`) exactly as they appear in the original text.
+3.  **Translate Only the Text:** Only translate the narrative text, dialogue, and UI elements.
+
+Provide only the translated text as a direct response, without any additional explanations or conversational text."""
+
+    model = genai.GenerativeModel(
+        model_name='gemini-pro',
+        system_instruction=system_prompt
+    )
+
     translated_list = []
     for text in text_list:
-        # Split the string by the first newline to handle multi-line content with tags
-        parts = text.split('\n', 1)
-        # Add the translation to the first part (the main text)
-        parts[0] = parts[0].rstrip() + ' (translated)'
-        # Join the parts back together
-        translated_list.append('\n'.join(parts))
+        if not text.strip():
+            translated_list.append(text)
+            continue
+
+        try:
+            print(f"    - Sending to Gemini: '{text[:40]}...'")
+            response = model.generate_content(text)
+            translated_text = response.text
+            translated_list.append(translated_text)
+            time.sleep(1) # Be respectful of API rate limits
+        except Exception as e:
+            print(f"    - Error translating '{text[:40]}...': {e}")
+            print("    - Skipping this text and continuing.")
+            translated_list.append(text) # Append original text on error
+
     return translated_list
 
 def interactive_translate(file_path, batch_size):
@@ -100,8 +129,8 @@ def interactive_translate(file_path, batch_size):
 
         texts_to_translate = [block['text'] for block in batch]
 
-        print(f"\n--- Translating Batch {i//batch_size + 1} ---")
-        translated_texts = dummy_translate(texts_to_translate)
+        print(f"\n--- Translating Batch {i//batch_size + 1} of {len(translatable_blocks)//batch_size + 1} ---")
+        translated_texts = gemini_translate(texts_to_translate)
 
         # Step 3: Update the content in memory
         for block, translated_text in zip(batch, translated_texts):
@@ -127,6 +156,14 @@ def interactive_translate(file_path, batch_size):
     print(f"\nAll batches processed and saved to {file_path}.")
 
 if __name__ == '__main__':
+    # Load environment variables from .env file
+    load_dotenv()
+
+    # Check for API key
+    if not os.getenv("GEMINI_API_KEY"):
+        print("Error: GEMINI_API_KEY not found in .env file.")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(description='Translate .rpy files automatically.')
     parser.add_argument('file_path', type=str, help='The path to the .rpy file to translate.')
     parser.add_argument('--batch-size', type=int, default=10, help='The number of lines to translate in each batch.')
