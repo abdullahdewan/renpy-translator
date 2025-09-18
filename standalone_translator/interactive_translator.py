@@ -11,46 +11,60 @@ import google.generativeai as genai
 
 from string_tool import EncodeBracketContent
 
-# Configure the Gemini API client
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
 def gemini_translate(text_list):
-    """
-    Translates a batch of texts using the Gemini API.
-    """
-    system_prompt = """You are an expert translator specializing in translating dialogue and user interface text for video games, specifically for the Ren'Py engine.
-Your task is to translate the given text from English to Bengali accurately while preserving the original tone and style.
+    # Configure the Gemini API client inside the function
+    # to ensure it runs after the .env file is loaded.
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+    if not text_list:
+        return []
+
+    delimiter = "_|||_"
+
+    system_prompt = f"""You are an expert translator for Ren'Py video games. Translate the following list of texts from English to Bengali.
+The texts are separated by a unique delimiter: `{delimiter}`.
+Your response MUST contain the same number of texts, separated by the same delimiter.
 
 **CRITICAL INSTRUCTIONS:**
-1.  **Preserve Tags:** Do NOT translate or alter any text inside special brackets, such as `[...`]` or `{...}`. These are game engine tags and must remain exactly as they are. For example, if you see `[player_name]`, you must return `[player_name]`.
-2.  **Preserve Newlines:** Maintain all newline characters (`\\n`) exactly as they appear in the original text.
-3.  **Translate Only the Text:** Only translate the narrative text, dialogue, and UI elements.
+1.  **Preserve Tags:** Do NOT translate or alter any text inside special brackets, such as `[...`]` or `{{...}}`. These are game engine tags.
+2.  **Preserve Newlines:** Maintain all newline characters (`\\n`).
+3.  **Direct Translation Only:** Provide only the translated texts, separated by the delimiter. Do not add any extra explanations.
 
-Provide only the translated text as a direct response, without any additional explanations or conversational text."""
+Example Input:
+Hello, [player_name].{delimiter}How are you?\nI am fine.
+
+Example Output:
+নমস্কার, [player_name]।{delimiter}আপনি কেমন আছেন?\nআমি ভালো আছি।
+"""
 
     model = genai.GenerativeModel(
         model_name='gemini-pro',
         system_instruction=system_prompt
     )
 
-    translated_list = []
-    for text in text_list:
-        if not text.strip():
-            translated_list.append(text)
-            continue
+    # Join the batch into a single string
+    combined_text = delimiter.join(text_list)
 
-        try:
-            print(f"    - Sending to Gemini: '{text[:40]}...'")
-            response = model.generate_content(text)
-            translated_text = response.text
-            translated_list.append(translated_text)
-            time.sleep(1) # Be respectful of API rate limits
-        except Exception as e:
-            print(f"    - Error translating '{text[:40]}...': {e}")
-            print("    - Skipping this text and continuing.")
-            translated_list.append(text) # Append original text on error
+    try:
+        print(f"    - Sending batch of {len(text_list)} texts to Gemini...")
+        response = model.generate_content(combined_text)
 
-    return translated_list
+        # Split the response by the delimiter to get individual translations
+        translated_texts = response.text.split(delimiter)
+
+        # Validate the response
+        if len(translated_texts) == len(text_list):
+            print("    - Batch successfully translated.")
+            return translated_texts
+        else:
+            print(f"    - Error: Mismatch in translated texts count. Expected {len(text_list)}, got {len(translated_texts)}.")
+            print("    - Skipping this batch to avoid corruption.")
+            return text_list # Return original texts on error
+
+    except Exception as e:
+        print(f"    - An error occurred during Gemini API call: {e}")
+        print("    - Skipping this batch and continuing.")
+        return text_list # Return original texts on error
 
 def interactive_translate(file_path, batch_size):
     """
