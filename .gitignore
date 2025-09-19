@@ -1,6 +1,9 @@
 # Environment variables
 .env
 
+# Generated config files
+standalone_translator/character_config.json
+
 # Python
 __pycache__/
 *.pyc

@@ -12,31 +12,47 @@ import google.generativeai as genai
 
 from string_tool import EncodeBracketContent
 
-def gemini_translate(text_list, model_name, history):
+def gemini_translate(batch_data, model_name, history, character_config):
     # Configure the Gemini API client inside the function
     # to ensure it runs after the .env file is loaded.
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-    if not text_list:
+    if not batch_data:
         return [], history
 
     max_retries = 3
 
-    system_prompt = """You are an expert translation API. You will be provided with a JSON array of strings in English. Your task is to translate each string into Bengali.
+    # Convert the character config to a string to embed in the prompt
+    character_config_str = json.dumps(character_config, indent=2, ensure_ascii=False)
 
-**RULES:**
-1.  **Input/Output Format:** You will receive a JSON array of strings and you MUST respond with only a valid JSON array of strings.
-2.  **Array Length:** The returned JSON array MUST have the exact same number of elements as the input array.
-3.  **Preserve Tags:** Do NOT translate or alter any text inside special brackets, such as `[...`]` or `{...}`. These are game engine tags and must be preserved exactly.
-4.  **Preserve Newlines:** Maintain all newline characters (`\\n`).
-5.  **Maintain Tone:** It is crucial to maintain the original emotion, expression, and tone of the dialogue.
-6.  **Direct Translation:** Do not add any extra explanations, apologies, or conversational text in your response. Your entire response must be a single, valid JSON array.
+    system_prompt = f"""You are an expert translator for Ren'Py video games, specializing in translating English dialogue into natural, colloquial Bengali.
 
-Example Input:
-["Hello, [player_name].", "How are you?\\nI am fine."]
+**Primary Goal:** Your main goal is to maintain consistency in character voice, tone, and relationships throughout the translation.
 
-Example Output:
-["নমস্কার, [player_name]।" , "আপনি কেমন আছেন?\\nআমি ভালো আছি।"]
+---
+**CHARACTER AND RELATIONSHIP CONTEXT:**
+You will be provided with the following JSON object describing the game's characters and their relationships. Use this as your primary guide for determining the correct level of formality (e.g., 'tumi' vs. 'apni') for each character's dialogue.
+```json
+{character_config_str}
+```
+
+---
+**INPUT/OUTPUT FORMAT:**
+- **Input:** You will receive a JSON array of objects. Each object has a "speaker" and a "dialogue" key.
+- **Output:** You MUST respond with a simple JSON array of translated strings. The array must have the exact same number of elements as the input array.
+
+---
+**TRANSLATION STYLE GUIDE:**
+1.  **Use Colloquial Bengali:** Translate into modern, natural, and conversational Bengali. Avoid overly formal or bookish language. The dialogue should sound like how people actually speak.
+2.  **Maintain Consistency:** Use the `CHARACTER AND RELATIONSHIP CONTEXT` and the conversation history to maintain a consistent voice and form of address for each character. Infer the listener from the conversation history if possible.
+3.  **Prefer Transliteration for Specific Words:** For certain English words, direct transliteration is preferred.
+    -   Example: `Hello` should be `হ্যালো`, not `নমস্কার`.
+    -   Example: `God` should be `গড`, not `ঈশ্বর`.
+4.  **Use Common "Banglish":** Where it sounds natural in conversation, use common English words.
+    -   Example: For "try the tea", a better translation is `"চা টা ট্রাই করতে চাই"`, not `"চা চেষ্টা করতে চাই"`.
+5.  **Preserve Game Tags:** Do NOT translate or alter any text inside special brackets like `[...`]` or `{{...}}`.
+6.  **Preserve Newlines:** Maintain all newline characters (`\\n`).
+7.  **Response Format:** Your entire response must be a single, valid JSON array of strings, with no other text or explanations.
 """
 
     model = genai.GenerativeModel(
@@ -46,21 +62,24 @@ Example Output:
 
     chat = model.start_chat(history=history)
 
-    json_input = json.dumps(text_list, ensure_ascii=False)
+    # Serialize the list of dicts into a JSON string
+    json_input = json.dumps(batch_data, ensure_ascii=False)
 
     for attempt in range(max_retries):
         try:
-            print(f"    - Sending batch of {len(text_list)} texts to Gemini (Attempt {attempt + 1}/{max_retries})...")
+            print(f"    - Sending batch of {len(batch_data)} texts to Gemini (Attempt {attempt + 1}/{max_retries})...")
             response = chat.send_message(json_input)
 
+            # Clean the response to ensure it's valid JSON
             cleaned_response_text = response.text.strip().lstrip("```json").rstrip("```")
+
             translated_texts = json.loads(cleaned_response_text)
 
-            if isinstance(translated_texts, list) and len(translated_texts) == len(text_list):
+            if isinstance(translated_texts, list) and len(translated_texts) == len(batch_data):
                 print("    - Batch successfully translated and parsed.")
                 return translated_texts, chat.history
             else:
-                print(f"    - Error: Parsed JSON is not a list or length mismatch. Expected {len(text_list)}, got {len(translated_texts)}.")
+                print(f"    - Error: Parsed JSON is not a list or length mismatch. Expected {len(batch_data)}, got {len(translated_texts)}.")
                 if attempt < max_retries - 1:
                     print("    - Retrying...")
                     time.sleep(5)
@@ -86,6 +105,23 @@ def interactive_translate(file_path, batch_size, model_name):
     Interactively translates an .rpy file using existing project logic.
     """
     print(f"Starting translation for: {file_path} with model: {model_name} and batch size: {batch_size}")
+
+    # Load character config
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), 'character_config.json')
+        with open(config_path, 'r', encoding='utf-8') as f:
+            character_config = json.load(f)
+        print("Loaded character_config.json.")
+    except FileNotFoundError:
+        print("Warning: 'character_config.json' not found.")
+        print("You can generate a template by running: python standalone_translator/generate_character_config.py <your_game_directory>")
+        print("Proceeding without character context.")
+        character_config = {}
+    except json.JSONDecodeError as e:
+        print(f"Warning: Could not parse character_config.json. Please check for syntax errors. Error: {e}")
+        print("Proceeding without character context.")
+        character_config = {}
+
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
@@ -165,11 +201,17 @@ def interactive_translate(file_path, batch_size, model_name):
     for i in range(0, len(translatable_blocks), batch_size):
         batch = translatable_blocks[i:i + batch_size]
 
-        texts_to_translate = [block['text'] for block in batch]
+        # Prepare batch with speaker context
+        batch_with_context = []
+        for block in batch:
+            if block['type'] == 'dialogue':
+                batch_with_context.append({"speaker": block.get('prefix', '').strip(), "dialogue": block['text']})
+            else: # For 'new_string', speaker is unknown
+                batch_with_context.append({"speaker": "unknown", "dialogue": block['text']})
 
         print(f"\n--- Translating Batch {i//batch_size + 1} of {len(translatable_blocks)//batch_size + 1} ---")
         try:
-            translated_texts, history = gemini_translate(texts_to_translate, model_name, history)
+            translated_texts, history = gemini_translate(batch_with_context, model_name, history, character_config)
         except RuntimeError as e:
             print(f"\nFATAL ERROR: {e}")
             print("The script will now exit to prevent further errors or data corruption.")
