@@ -8,14 +8,14 @@ import argparse
 
 def generate_config(directory):
     """
-    Scans a directory for .rpy files, extracts character definitions,
+    Scans a directory for .rpy files, extracts character definitions (tag and name),
     and generates a character_config.json file.
     """
     print(f"Scanning directory: {directory} for character definitions in .rpy files...")
-    character_tags = set()
+    character_data = {} # Use a dictionary to store tag: name
 
-    # Regex to find lines like: define a = Character(...)
-    char_def_regex = re.compile(r'^\s*define\s+([a-zA-Z0-9_]+)\s*=\s*Character\(')
+    # Regex to find lines like: define a = Character("Amelie", ...)
+    char_def_regex = re.compile(r'^\s*define\s+([a-zA-Z0-9_]+)\s*=\s*Character\(\s*"(.*?)"')
 
     for root, _, files in os.walk(directory):
         for file in files:
@@ -27,22 +27,23 @@ def generate_config(directory):
                             match = char_def_regex.match(line)
                             if match:
                                 char_tag = match.group(1)
-                                character_tags.add(char_tag)
-                                print(f"  - Found character definition: {char_tag}")
+                                char_name = match.group(2)
+                                character_data[char_tag] = char_name
+                                print(f"  - Found character: tag='{char_tag}', name='{char_name}'")
                 except Exception as e:
                     print(f"    - Could not read file {file_path}: {e}")
 
-    if not character_tags:
+    if not character_data:
         print("No character definitions found.")
         return
 
-    print(f"\nFound {len(character_tags)} unique characters: {sorted(list(character_tags))}")
+    print(f"\nFound {len(character_data)} unique characters: {sorted(character_data.keys())}")
 
     # Generate the JSON structure
     config = {"characters": {}}
-    for tag in sorted(list(character_tags)):
+    for tag, name in sorted(character_data.items()):
         config["characters"][tag] = {
-            "name": "",
+            "name": name,
             "personality": "",
             "relationships": {}
         }
