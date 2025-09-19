@@ -8,35 +8,35 @@ import argparse
 
 def generate_config(directory):
     """
-    Scans a directory for .rpy files, extracts unique character tags,
+    Scans a directory for .rpy files, extracts character definitions,
     and generates a character_config.json file.
     """
-    print(f"Scanning directory: {directory} for .rpy files...")
+    print(f"Scanning directory: {directory} for character definitions in .rpy files...")
     character_tags = set()
+
+    # Regex to find lines like: define a = Character(...)
+    char_def_regex = re.compile(r'^\s*define\s+([a-zA-Z0-9_]+)\s*=\s*Character\(')
 
     for root, _, files in os.walk(directory):
         for file in files:
             if file.endswith('.rpy'):
                 file_path = os.path.join(root, file)
-                print(f"  - Processing {file_path}")
                 try:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         for line in f:
-                            # Regex to find dialogue lines with potential character tags
-                            match = re.match(r'^\s*(.*?)(".*")$', line.lstrip())
+                            match = char_def_regex.match(line)
                             if match:
-                                prefix = match.group(1).strip()
-                                # Add to set if it's a valid tag (not a keyword)
-                                if prefix and not prefix.startswith(('if', 'elif', 'else', 'while', 'for', 'return', 'jump', 'call', 'label', 'scene', 'show', 'hide', 'with', 'pass', 'def', 'class')):
-                                    character_tags.add(prefix)
+                                char_tag = match.group(1)
+                                character_tags.add(char_tag)
+                                print(f"  - Found character definition: {char_tag}")
                 except Exception as e:
                     print(f"    - Could not read file {file_path}: {e}")
 
     if not character_tags:
-        print("No character tags found.")
+        print("No character definitions found.")
         return
 
-    print(f"\nFound {len(character_tags)} unique character tags: {sorted(list(character_tags))}")
+    print(f"\nFound {len(character_tags)} unique characters: {sorted(list(character_tags))}")
 
     # Generate the JSON structure
     config = {"characters": {}}
